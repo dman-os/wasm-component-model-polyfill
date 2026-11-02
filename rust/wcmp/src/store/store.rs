@@ -13,7 +13,7 @@ use crate::concurrency::{
     Accessor, HostSuspensionProvider, Outcome, Scheduler, StackSwitchingProvider, StoreProvider,
 };
 use crate::engine::Engine;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SchedulerCause};
 use crate::internal::EngineInternal;
 use crate::resource::HandleTables;
 use crate::runtime_layer::{AsContextMut, MaybeSend, Store as RuntimeStore, substrate_failure};
@@ -507,6 +507,32 @@ impl<T: 'static> Store<T> {
     fn turn(&mut self, waker: &Waker) -> Result<Outcome> {
         let mut context = self.context();
         context.internal().turn(waker)
+    }
+
+    /// Run ready work until the store stalls.
+    ///
+    /// Turns run synchronously with a no-op waker for as long as they make
+    /// progress. A yield, a pending host task, an idle store, or a thread left
+    /// for its suspend provider ends the drive successfully. Unlike a call
+    /// driver, an idle store is not a deadlock. A failed turn returns its
+    /// error, and entering while another driver is inside a turn fails with
+    /// the recursive-driver cause.
+    ///
+    /// The caller must invoke this method again after external work makes the
+    /// store runnable; its no-op waker cannot schedule that invocation.
+    pub fn run_until_stalled(&mut self) -> Result<()> {
+        self.reachable()?;
+        if self.turn_in_flight() {
+            return Err(Error::Scheduler(SchedulerCause::RecursiveDriver));
+        }
+        loop {
+            match self.turn(Waker::noop())? {
+                Outcome::Progress => {}
+                Outcome::Yield | Outcome::Waiting | Outcome::Idle | Outcome::Resuming => {
+                    return Ok(());
+                }
+            }
+        }
     }
 
     /// Run `body` with an accessor to this store, driving the
