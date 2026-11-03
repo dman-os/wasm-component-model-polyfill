@@ -21,6 +21,7 @@ use crate::resource::HandleTables;
 use crate::runtime_layer::{AsContextMut, MaybeSend, Store as RuntimeStore, substrate_failure};
 use crate::suspend_provider_kind::SuspendProviderKind;
 
+use super::stalled::Stalled;
 use super::store_context::StoreContext;
 use super::store_context::internal::StoreContextInternalExt;
 use super::store_data::StoreData;
@@ -520,9 +521,14 @@ impl<T: 'static> Store<T> {
     /// error, and entering while another driver is inside a turn fails with
     /// the recursive-driver cause.
     ///
-    /// The caller must invoke this method again after external work makes the
-    /// store runnable; its no-op waker cannot schedule that invocation.
-    pub fn run_until_stalled(&mut self) -> Result<()> {
+    /// The answer says why the drive stopped. [`Stalled::Yielded`] means a
+    /// task gave way and is ready to run again: the caller drives again when
+    /// it likes, and a host that does not would leave that task, and every
+    /// task spawned behind it, unrun. [`Stalled::Idle`] means the store runs
+    /// again only after external work makes it runnable; the no-op waker
+    /// cannot schedule that invocation, so the caller must invoke this method
+    /// again then.
+    pub fn run_until_stalled(&mut self) -> Result<Stalled> {
         self.reachable()?;
         if self.turn_in_flight() {
             return Err(Error::Scheduler(SchedulerCause::RecursiveDriver));
@@ -530,9 +536,8 @@ impl<T: 'static> Store<T> {
         loop {
             match self.turn(Waker::noop())? {
                 Outcome::Progress => {}
-                Outcome::Yield | Outcome::Waiting | Outcome::Idle | Outcome::Resuming => {
-                    return Ok(());
-                }
+                Outcome::Yield => return Ok(Stalled::Yielded),
+                Outcome::Waiting | Outcome::Idle | Outcome::Resuming => return Ok(Stalled::Idle),
             }
         }
     }

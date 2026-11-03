@@ -5,6 +5,15 @@ Every published crate carries the same version. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `Store::run_until_stalled` answers a `Stalled`: `Yielded` when a task gave way
+  and is ready to run again, `Idle` when the store runs again only after
+  external work. A host that drives in bursts needs the difference, because a
+  yield left undriven starves that task and every task spawned behind it.
+
 ## [0.1.1] - 2026-10-21
 
 ### Performance

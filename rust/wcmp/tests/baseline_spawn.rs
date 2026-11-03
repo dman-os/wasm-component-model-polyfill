@@ -26,7 +26,7 @@ use core::task::{Context, Poll, Waker};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use wcmp::{Component, Engine, Func, Instance, Linker, Store, Val};
+use wcmp::{Component, Engine, Func, Instance, Linker, Stalled, Store, Val};
 use wcmp_macros::component;
 
 #[cfg(target_arch = "wasm32")]
@@ -353,3 +353,37 @@ async fn it_drops_a_spawned_task_that_never_ran_with_its_store() {
 
 #[path = "support/backend.rs"]
 mod test_backend;
+
+#[wcmp_macros::test]
+async fn it_reports_whether_a_stalled_store_still_has_a_yielded_task_to_run() {
+    let (mut store, instance) = instantiate().await;
+    let (counting, waiting) = (func(&instance, "count"), func(&instance, "stuck"));
+
+    let finishes = store
+        .spawn(async move |accessor| counting.call_concurrent(&accessor, &[Val::U32(3)]).await)
+        .expect("spawn the task that finishes");
+    assert_eq!(
+        store.run_until_stalled().expect("a burst"),
+        Stalled::Yielded,
+        "the guest gave way and is ready to run again"
+    );
+    let mut bursts = 1;
+    while store.run_until_stalled().expect("a burst") == Stalled::Yielded {
+        bursts += 1;
+        assert!(bursts <= BURSTS, "the task kept yielding");
+    }
+    assert!(
+        finishes.is_finished(),
+        "a host that drives again on every yield finishes the task"
+    );
+
+    let stays = store
+        .spawn(async move |accessor| waiting.call_concurrent(&accessor, &[Val::U32(0)]).await)
+        .expect("spawn the task that waits for ever");
+    assert_eq!(
+        store.run_until_stalled().expect("a burst"),
+        Stalled::Idle,
+        "a task that waits on a waitable is not ready, so a drive again would do nothing"
+    );
+    assert!(!stays.is_finished());
+}

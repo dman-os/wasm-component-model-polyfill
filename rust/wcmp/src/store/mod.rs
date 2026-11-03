@@ -34,9 +34,13 @@
 //! it registers and puts them back when its plan fails, so that a
 //! failed instantiation leaves the store as it found it.
 //!
+//! [`Stalled`] is why a drive of a store stopped: with nothing ready, or
+//! with a yielded task still ready.
+//!
 //! [`StoreId`] is the process-unique identity a store mints at
 //! construction, which an instance records and checks.
 mod resource_record;
+mod stalled;
 #[allow(clippy::module_inception)]
 mod store;
 mod store_context;
@@ -44,6 +48,7 @@ mod store_data;
 mod store_id;
 
 pub use resource_record::ResourceRecord;
+pub use stalled::Stalled;
 pub use store::Store;
 pub use store::internal::StoreInternalExt;
 pub use store_context::StoreContext;

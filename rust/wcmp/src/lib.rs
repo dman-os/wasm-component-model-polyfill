@@ -313,7 +313,7 @@ pub use crate::module::{
 };
 pub use crate::projection::{Access, HasData, HasSelf};
 pub use crate::resource::{Resource, ResourceAny, ResourceDynamic, ResourceTable};
-pub use crate::store::{Store, StoreContext, StoreId};
+pub use crate::store::{Stalled, Store, StoreContext, StoreId};
 pub use crate::suspend_provider_kind::SuspendProviderKind;
 pub use crate::typed::{ComponentNamedList, ComponentType, Lift, Lower};
 pub use crate::types::{
