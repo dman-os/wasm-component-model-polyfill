@@ -37,7 +37,9 @@ use crate::abi::context::BoundaryContext;
 use crate::abi::runtime_state::AbiRuntimeState;
 use crate::abi::shape::AbiShape;
 use crate::component::{Component, ExternalName, FunctionType};
-use crate::concurrency::{CopyBuffer, EndId, EndPayload, ErrorContextId};
+use crate::concurrency::{
+    Accessor, CopyBuffer, EndId, EndPayload, ErrorContextId, HostTask, MaybeSend,
+};
 use crate::error::{AbiPosition, Error, Result, TypePathStep, TypeRendering};
 use crate::executor::ir::{CanonOptions, ExecutorIr};
 use crate::identifier::InterfaceIdentifier;
@@ -149,6 +151,17 @@ pub trait ErrorInternal {
 pub trait AccessorInternal<T: 'static> {
     /// A token for the store `store` names.
     fn new(store: StoreId) -> Self;
+}
+
+/// The crate-internal face of [`JoinHandle`](crate::JoinHandle).
+pub trait JoinHandleInternal<T: 'static, R>: Sized {
+    /// The host task of a spawned task, and the handle that observes
+    /// it. `task` is called here, once, with a token for the store
+    /// `store` names, and its future is what the host task polls.
+    fn spawned<F, Fut>(store: StoreId, task: F) -> (Self, HostTask<T>)
+    where
+        F: FnOnce(Accessor<T>) -> Fut,
+        Fut: core::future::Future<Output = R> + MaybeSend + 'static;
 }
 
 /// The crate-internal face of [`Destination`](crate::Destination).

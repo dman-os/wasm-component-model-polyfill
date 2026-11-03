@@ -6,15 +6,17 @@
 
 //! The polyfill's owner of guest state.
 
+use core::future::Future;
 use core::task::Waker;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::concurrency::{
-    Accessor, HostSuspensionProvider, Outcome, Scheduler, StackSwitchingProvider, StoreProvider,
+    Accessor, HostSuspensionProvider, JoinHandle, Outcome, Scheduler, StackSwitchingProvider,
+    StoreProvider,
 };
 use crate::engine::Engine;
 use crate::error::{Error, Result, SchedulerCause};
-use crate::internal::EngineInternal;
+use crate::internal::{EngineInternal, JoinHandleInternal};
 use crate::resource::HandleTables;
 use crate::runtime_layer::{AsContextMut, MaybeSend, Store as RuntimeStore, substrate_failure};
 use crate::suspend_provider_kind::SuspendProviderKind;
@@ -533,6 +535,43 @@ impl<T: 'static> Store<T> {
                 }
             }
         }
+    }
+
+    /// Spawn `task` into this store, and answer the handle that
+    /// observes it.
+    ///
+    /// `task` is called once, here, with an [`Accessor`] to this
+    /// store, and the future it returns is what the store polls. The
+    /// task is registered and not awaited: this entry polls nothing.
+    /// It makes progress whenever the store is driven, by
+    /// [`run_concurrent`](Self::run_concurrent),
+    /// [`run_until_stalled`](Self::run_until_stalled), or a call into
+    /// an export, and its future can call async exports through the
+    /// accessor, which is how a host starts a long-lived guest task
+    /// that outlives any one call and drives it in bounded bursts.
+    /// A synchronous export can be called between bursts while the
+    /// task's guest call is suspended.
+    ///
+    /// The returned [`JoinHandle`] observes the task's output, by
+    /// being awaited or through [`JoinHandle::is_finished`], and
+    /// cancels it through [`JoinHandle::abort`]. Dropping the handle
+    /// cancels nothing, as in Wasmtime. Dropping the store drops every
+    /// pending spawned task without polling it, which resolves each
+    /// handle to `None`.
+    ///
+    /// The polyfill takes a closure from the accessor to the future
+    /// where Wasmtime takes an `AccessorTask`, and the task's output
+    /// is any `R`, where Wasmtime's is `Result<()>`.
+    pub fn spawn<R, F, Fut>(&mut self, task: F) -> Result<JoinHandle<R>>
+    where
+        F: FnOnce(Accessor<T>) -> Fut,
+        Fut: Future<Output = R> + crate::concurrency::MaybeSend + 'static,
+        R: crate::concurrency::MaybeSend + 'static,
+    {
+        self.reachable()?;
+        let (handle, host_task) = JoinHandle::spawned(self.id(), task);
+        self.scheduler_mut().push_host_task(host_task);
+        Ok(handle)
     }
 
     /// Run `body` with an accessor to this store, driving the

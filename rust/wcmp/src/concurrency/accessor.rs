@@ -6,12 +6,16 @@
 
 //! A token that reaches the store from inside a poll.
 
+use core::future::Future;
+
 use crate::error::Result;
-use crate::internal::AccessorInternal;
+use crate::internal::{AccessorInternal, JoinHandleInternal};
 use crate::projection::{Access, HasData, HasSelf};
 use crate::store::StoreContextInternalExt;
 use crate::store::StoreId;
 
+use super::join_handle::JoinHandle;
+use super::maybe_send::MaybeSend;
 use super::poll_scope::PollScope;
 
 /// A token that reaches the store from inside a poll.
@@ -139,6 +143,37 @@ impl<T: 'static, D: HasData + ?Sized> Accessor<T, D> {
                 body(Access::new(store.internal().reborrow(), get_data))
             })
         })?
+    }
+
+    /// Spawn `task` into the store this token names, and answer the
+    /// handle that observes it. The name is Wasmtime's.
+    ///
+    /// `task` is called once, here, with a token of the store whose
+    /// projection is the whole host data, and the future it returns
+    /// is what the store polls. The task is registered and not
+    /// awaited: it makes progress whenever something drives the
+    /// store, which is a `run_concurrent` entry, a
+    /// [`Store::run_until_stalled`](crate::Store::run_until_stalled), or
+    /// a call into an export. Its future may call async exports
+    /// through the token it was handed. See [`JoinHandle`] for how the
+    /// task's output is observed and how it is aborted.
+    ///
+    /// The reach is a [`try_with`](Self::try_with), so the same
+    /// refusals apply: a spawn from inside another reach's closure
+    /// fails with the recursive-driver cause, and one made outside a
+    /// poll of the store with the store-not-in-poll cause.
+    pub fn spawn<R, F, Fut>(&self, task: F) -> Result<JoinHandle<R>>
+    where
+        F: FnOnce(Accessor<T>) -> Fut,
+        Fut: Future<Output = R> + MaybeSend + 'static,
+        R: MaybeSend + 'static,
+    {
+        let store = self.store;
+        self.try_with(|mut access| {
+            let (handle, host_task) = JoinHandle::spawned(store, task);
+            access.store().internal().push_host_task(host_task);
+            handle
+        })
     }
 
     /// The projection this token hands its reaches. The name is

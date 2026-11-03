@@ -293,8 +293,8 @@ pub use crate::component::{
 pub use crate::concurrency::{
     Accessor, AsAccessor, Destination, EndKind, ErrorContext, ErrorContextAny, FutureAny,
     FutureConsumer, FutureProducer, FutureReader, GuardedFutureReader, GuardedStreamReader,
-    HostFuture, MaybeSend, Source, StreamAny, StreamConsumer, StreamProducer, StreamReader,
-    StreamResult,
+    HostFuture, JoinHandle, MaybeSend, Source, StreamAny, StreamConsumer, StreamProducer,
+    StreamReader, StreamResult,
 };
 pub use crate::engine::Engine;
 pub use crate::engine_config::EngineConfig;
