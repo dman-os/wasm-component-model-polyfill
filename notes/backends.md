@@ -37,6 +37,7 @@ capability the backend does not declare fails at `Component::new` with
 | `threads`             | Yes            | Yes            | No    | Yes                              |
 | `stack_switching`     | No             | No             | No    | Where Wasmtime's compiler has it |
 | `host_suspension`     | Yes, with JSPI | Yes, with JSPI | Yes   | No                               |
+| `late_trap_reasons`   | Yes, with JSPI | Yes, with JSPI | No    | No                               |
 
 Sources: each backend's `src/backend.rs` and crate docs (`src/lib.rs`). The
 Chromium and WebKitGTK columns are what the browser backend's probes find, as

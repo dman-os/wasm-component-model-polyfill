@@ -7,6 +7,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `Capability::LateTrapReasons` (`late_trap_reasons`), which the browser backend
+  declares with host suspension: a call that traps learns why only on a
+  microtask. `SuspendProvider::reports_traps_late` carries it to the scheduler.
+
+### Fixed
+
+- A trap in a synchronous-typed export is the call's own error on the browser
+  backend: the export runs as a plain core call, so the call is `Ready(Err)` on
+  its first poll instead of `Pending` until a microtask.
+
 ### Changed
 
 - `Store::run_until_stalled` answers a `Stalled`: `Yielded` when a task gave way

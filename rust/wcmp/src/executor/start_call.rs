@@ -503,9 +503,15 @@ fn start_call<T: 'static>(
         return finish(store, called);
     }
     let thread = store.internal().implicit_thread(task)?;
-    store
-        .internal()
-        .run_thread_entry(thread, base, &function, &core_arguments, slots, finish)
+    store.internal().run_thread_entry(
+        thread,
+        base,
+        &function,
+        &core_arguments,
+        slots,
+        false,
+        finish,
+    )
 }
 
 /// End `task` on its failure path, and answer the failure the call

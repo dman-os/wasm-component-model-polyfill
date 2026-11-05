@@ -57,7 +57,7 @@ fn it_takes_every_wasm_feature_of_the_lexicon_into_account() {
 }
 
 #[wcmp_macros::test]
-fn it_gives_no_wasm_feature_name_to_host_suspension_or_a_reserved_name() {
+fn it_gives_no_wasm_feature_name_to_a_host_capability_or_a_reserved_name() {
     for capability in Capability::ALL
         .into_iter()
         .filter(|capability| !capability.is_wasm_feature())
@@ -99,6 +99,7 @@ fn it_finds_each_capability_by_its_name() {
             "threads",
             "stack_switching",
             "host_suspension",
+            "late_trap_reasons",
             "fuel",
             "epoch_interruption",
             "resource_limits",

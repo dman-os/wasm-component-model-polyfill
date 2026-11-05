@@ -111,6 +111,34 @@ pub trait SuspendProvider<T: 'static>: 'static {
         args: &[RuntimeVal],
     ) -> Result<EntryStatus>;
 
+    /// Whether an entry this provider starts that traps before it first
+    /// suspends is still [`EntryStatus::Running`] when `start` returns,
+    /// and fails only later, once the backend settles the call and
+    /// learns the reason (the browser's resumable calls: a rejection's
+    /// reason is readable only from a microtask).
+    ///
+    /// The scheduler uses it to run a synchronous-typed export as a plain
+    /// core call instead. A synchronous-typed export holds its instance's
+    /// may-not-suspend flag, so its thread never suspends and gains
+    /// nothing from a stack of its own, while a plain call reports the
+    /// trap before it returns, as a call on a provider with no late traps
+    /// does. Without it the export's call is `Pending` on its first poll
+    /// and a host that treats a pending synchronous export as an invariant
+    /// break cannot tell a trap from a suspension.
+    ///
+    /// Trade-off, so the choice can be revisited. Running every
+    /// synchronous-typed export as a plain call on every provider (a
+    /// single code path, not gated on this answer) would also drop the
+    /// stack and thread bookkeeping that `start_thread_entry` does for a
+    /// provider's thread. It is not done because that changes the
+    /// Wasmi-backed provider's behaviour too, and the conformance lanes
+    /// that would validate it run only under Nix. Gating on this answer
+    /// confines the change to the backends that need it, at the cost of a
+    /// provider-dependent execution path for synchronous exports.
+    fn reports_traps_late(&self) -> bool {
+        false
+    }
+
     /// Resume the suspended `thread`. A provider that runs it inside
     /// the call runs it until it finishes or suspends again, and
     /// answers as [`start`](Self::start) does. One that runs it later

@@ -43,6 +43,14 @@ pub enum Capability {
     /// Host suspension: a suspending host function can set a resumable call
     /// aside, and the host resumes it later.
     HostSuspension,
+    /// Late trap reasons: a call that traps without suspending learns why
+    /// only after the call returned, on a later turn of the host's event
+    /// loop, so the call's trap is not an error of the call itself. The
+    /// browser has this: JavaScript Promise Integration answers a call
+    /// through a promise, and a rejection's reason is readable only from a
+    /// microtask. Where a backend does not declare it, a call that traps
+    /// fails with its reason before it returns.
+    LateTrapReasons,
     /// Reserved for fuel. No backend declares it.
     Fuel,
     /// Reserved for epoch interruption. No backend declares it.
@@ -54,7 +62,7 @@ pub enum Capability {
 
 impl Capability {
     /// Every name of the lexicon, in the order of the lexicon.
-    pub const ALL: [Capability; 13] = [
+    pub const ALL: [Capability; 14] = [
         Capability::MultiMemory,
         Capability::Memory64,
         Capability::TailCall,
@@ -65,6 +73,7 @@ impl Capability {
         Capability::Threads,
         Capability::StackSwitching,
         Capability::HostSuspension,
+        Capability::LateTrapReasons,
         Capability::Fuel,
         Capability::EpochInterruption,
         Capability::ResourceLimits,
@@ -83,6 +92,7 @@ impl Capability {
             Capability::Threads => "threads",
             Capability::StackSwitching => "stack_switching",
             Capability::HostSuspension => "host_suspension",
+            Capability::LateTrapReasons => "late_trap_reasons",
             Capability::Fuel => "fuel",
             Capability::EpochInterruption => "epoch_interruption",
             Capability::ResourceLimits => "resource_limits",
@@ -98,11 +108,13 @@ impl Capability {
     }
 
     /// Whether the capability is a Wasm feature, named as `wasmparser`
-    /// names it. Host suspension and the reserved names are not.
+    /// names it. Host suspension, late trap reasons, and the reserved names
+    /// are not.
     pub const fn is_wasm_feature(self) -> bool {
         !matches!(
             self,
             Capability::HostSuspension
+                | Capability::LateTrapReasons
                 | Capability::Fuel
                 | Capability::EpochInterruption
                 | Capability::ResourceLimits

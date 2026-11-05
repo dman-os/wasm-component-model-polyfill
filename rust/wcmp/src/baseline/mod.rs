@@ -47,6 +47,7 @@ mod stream_future_transfer;
 mod subtask_drop;
 mod suspend;
 mod switch_module;
+mod sync_export_late_trap;
 mod sync_lower;
 mod tasks;
 mod thread_builtins;

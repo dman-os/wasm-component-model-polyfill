@@ -388,7 +388,10 @@ impl<'b, 'a, T: 'static> StoreContextInternal<'b, 'a, T> {
     }
 
     /// Run a thread entry, through the provider when the store has
-    /// one, and hand what it produced to `finish`.
+    /// one, and hand what it produced to `finish`. `sync` marks the
+    /// entry of a synchronous-typed export: see
+    /// [`StoreContext::run_thread_entry`].
+    #[allow(clippy::too_many_arguments)]
     pub fn run_thread_entry(
         self,
         thread: ThreadId,
@@ -396,10 +399,11 @@ impl<'b, 'a, T: 'static> StoreContextInternal<'b, 'a, T> {
         entry: &RuntimeFunc,
         args: &[RuntimeVal],
         results: Vec<RuntimeVal>,
+        sync: bool,
         finish: impl EntryFinish<T>,
     ) -> Result<()> {
         self.context
-            .run_thread_entry(thread, base, entry, args, results, finish)
+            .run_thread_entry(thread, base, entry, args, results, sync, finish)
     }
 
     /// Start an explicit thread `thread.resume-later` made ready

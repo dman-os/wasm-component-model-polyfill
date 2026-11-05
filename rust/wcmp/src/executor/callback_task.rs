@@ -263,6 +263,7 @@ impl CallbackTask {
             &self.callback,
             &arguments,
             vec![RuntimeVal::I32(0)],
+            false,
             finish,
         )
     }

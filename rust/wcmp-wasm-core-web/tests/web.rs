@@ -142,6 +142,7 @@ fn it_declares_what_the_engine_of_the_page_implements() {
             Capability::RelaxedSimd,
             Capability::Threads,
             Capability::HostSuspension,
+            Capability::LateTrapReasons,
         ],
         // The set of the WebKitGTK of the lanes, 2.54.1. Safari differs:
         // Safari 26 has no JSPI, so it declares no host suspension.
@@ -164,6 +165,7 @@ fn it_declares_what_the_engine_of_the_page_implements() {
                 Capability::RelaxedSimd,
                 Capability::Threads,
                 Capability::HostSuspension,
+                Capability::LateTrapReasons,
             ]
         }
         PageEngine::SpiderMonkey => {
@@ -189,9 +191,11 @@ async fn it_loads_and_declares_less_where_a_probe_fails() {
     // probe module.
     let refuse = Closure::<dyn Fn(JsValue) -> bool>::new(|_| false);
     let refusing = with_webassembly_property("validate", refuse.as_ref(), engine);
-    // Host suspension rests on JavaScript Promise Integration, which no
-    // probe module tests.
-    let unprobed = Capabilities::empty().with(Capability::HostSuspension);
+    // Host suspension and late trap reasons rest on JavaScript Promise
+    // Integration, which no probe module tests.
+    let unprobed = Capabilities::empty()
+        .with(Capability::HostSuspension)
+        .with(Capability::LateTrapReasons);
     assert_eq!(refusing.capabilities(), unprobed);
     assert!(
         declared.iter().count() > refusing.capabilities().iter().count(),

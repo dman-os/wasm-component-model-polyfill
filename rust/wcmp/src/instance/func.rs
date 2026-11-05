@@ -781,6 +781,7 @@ impl Func {
             &self.export.func,
             &core_args,
             slots,
+            false,
             finish,
         )
     }
@@ -896,6 +897,7 @@ impl Func {
             &self.export.func,
             &core_args,
             slots,
+            true,
             finish,
         )
     }

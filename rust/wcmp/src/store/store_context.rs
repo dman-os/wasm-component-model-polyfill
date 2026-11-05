@@ -1763,8 +1763,13 @@ impl<'a, T: 'static> StoreContext<'a, T> {
     /// a trampoline that made a nested start continues once the new
     /// thread suspends or finishes, as the reference's `canon_lower`
     /// continues once the `thread.resume` it made returns.
+    ///
+    /// `sync` marks the entry of a synchronous-typed export, which the
+    /// start runs as a plain core call under a provider whose entries
+    /// report a trap late (see [`SuspendProvider::reports_traps_late`]).
     /// Workspace-internal.
     #[tracing::instrument(level = "trace", name = "thread entry", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     fn run_thread_entry(
         &mut self,
         thread: ThreadId,
@@ -1772,11 +1777,21 @@ impl<'a, T: 'static> StoreContext<'a, T> {
         entry: &RuntimeFunc,
         args: &[RuntimeVal],
         results: Vec<RuntimeVal>,
+        sync: bool,
         finish: impl EntryFinish<T>,
     ) -> Result<()> {
         let ty = entry.ty(self.runtime()).map_err(substrate_failure)?;
         let mark = self.scheduler().switcher_mark();
-        self.start_thread_entry(thread, base, entry, ty.as_ref(), args, results, finish)?;
+        self.start_thread_entry(
+            thread,
+            base,
+            entry,
+            ty.as_ref(),
+            args,
+            results,
+            sync,
+            finish,
+        )?;
         self.follow_switches(mark)
     }
 
@@ -1798,9 +1813,24 @@ impl<'a, T: 'static> StoreContext<'a, T> {
         ty: Option<&FuncType>,
         args: &[RuntimeVal],
         results: Vec<RuntimeVal>,
+        sync: bool,
         finish: impl EntryFinish<T>,
     ) -> Result<()> {
-        let Some(provider) = self.provider() else {
+        // A synchronous-typed export never suspends its thread (its
+        // instance holds the may-not-suspend flag), so under a provider
+        // whose entries report a trap only after the start returned, it
+        // runs as the plain core call the no-provider path makes: the
+        // trap is the call's own error, before it returns, and the
+        // export's call is `Ready` on its first poll. A block inside it
+        // takes the seam's nested-turn fallback (`SuspendSeam::try_block`),
+        // which is also what a thread of a synchronous-typed export that
+        // runs on a stack of its own does for every block but a switch to
+        // another thread; that one needs a stack to suspend, and the plain
+        // call has none.
+        let provider = self
+            .provider()
+            .filter(|provider| !(sync && SuspendProvider::<T>::reports_traps_late(provider)));
+        let Some(provider) = provider else {
             let mut results = results;
             let called = entry
                 .call(self.runtime_mut(), args, &mut results)
@@ -2631,6 +2661,7 @@ impl<'a, T: 'static> StoreContext<'a, T> {
             Some(&ty),
             &[start.context],
             Vec::new(),
+            false,
             finish,
         )
     }

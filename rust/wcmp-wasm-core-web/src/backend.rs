@@ -116,13 +116,20 @@ impl Backend for Web {
 }
 
 /// The capabilities of a backend whose probes found `probed`: those, and
-/// `host_suspension` where the browser has both functions of JavaScript
-/// Promise Integration.
+/// `host_suspension` and `late_trap_reasons` where the browser has both
+/// functions of JavaScript Promise Integration. The two go together: a
+/// resumable call answers through a promise, and the reason of a trap in
+/// it is readable only once the promise settles (see
+/// [`Capability::LateTrapReasons`]).
 fn capabilities(probed: Capabilities, jspi: bool) -> Capabilities {
     if jspi {
-        probed.with(Capability::HostSuspension)
+        probed
+            .with(Capability::HostSuspension)
+            .with(Capability::LateTrapReasons)
     } else {
-        probed.without(Capability::HostSuspension)
+        probed
+            .without(Capability::HostSuspension)
+            .without(Capability::LateTrapReasons)
     }
 }
 
@@ -154,7 +161,9 @@ mod tests {
         let probed = Capabilities::empty().with(Capability::Gc);
         assert_eq!(
             capabilities(probed, true),
-            probed.with(Capability::HostSuspension)
+            probed
+                .with(Capability::HostSuspension)
+                .with(Capability::LateTrapReasons)
         );
         assert_eq!(capabilities(probed, false), probed);
     }

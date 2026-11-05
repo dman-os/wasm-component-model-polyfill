@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use crate::error::{Error, Result, ThreadCause};
 use crate::internal::ErrorInternal;
 use crate::runtime_layer::{
-    Extern as RuntimeExtern, Func as RuntimeFunc, FuncType, HostFrames, Imports,
+    Capability, Extern as RuntimeExtern, Func as RuntimeFunc, FuncType, HostFrames, Imports,
     Instance as RuntimeInstance, Module as RuntimeModule, ResumableCall, Resumption, Shared,
     SuspendedCall, TrapKind, Val as RuntimeVal, ValType as RuntimeValType, at_once, call_failure,
     host_func, instantiate, substrate_failure,
@@ -117,6 +117,10 @@ pub struct HostSuspensionProvider {
     /// the host functions that record them must be `Send` on every
     /// target, and a waiting call is not in the browser.
     finished: Finished,
+    /// Whether the backend declares `late_trap_reasons`, so that an entry
+    /// that traps is `Running` until the backend settles it. See
+    /// [`SuspendProvider::reports_traps_late`].
+    late_traps: bool,
 }
 
 /// The results each thread's entry wrapper handed the host.
@@ -270,6 +274,12 @@ impl HostSuspensionProvider {
             starts: Arc::default(),
             threads: Shared::new(Arc::default()),
             finished: Arc::default(),
+            late_traps: store
+                .internal()
+                .runtime_mut()
+                .engine()
+                .capabilities()
+                .contains(Capability::LateTrapReasons),
         })
     }
 
@@ -634,6 +644,10 @@ impl HostSuspensionProvider {
 }
 
 impl<T: 'static> SuspendProvider<T> for HostSuspensionProvider {
+    fn reports_traps_late(&self) -> bool {
+        self.late_traps
+    }
+
     fn start(
         &self,
         store: &mut StoreContext<'_, T>,

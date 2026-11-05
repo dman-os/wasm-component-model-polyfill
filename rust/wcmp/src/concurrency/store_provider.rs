@@ -156,6 +156,13 @@ impl StoreProvider {
 }
 
 impl<T: 'static> SuspendProvider<T> for StoreProvider {
+    fn reports_traps_late(&self) -> bool {
+        match self {
+            Self::StackSwitching(provider) => SuspendProvider::<T>::reports_traps_late(provider),
+            Self::HostSuspension(provider) => SuspendProvider::<T>::reports_traps_late(provider),
+        }
+    }
+
     fn start(
         &self,
         store: &mut StoreContext<'_, T>,
