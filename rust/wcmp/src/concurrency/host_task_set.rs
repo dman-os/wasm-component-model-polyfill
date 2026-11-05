@@ -196,6 +196,21 @@ impl<T: 'static> HostTaskSet<T> {
         true
     }
 
+    /// Take out the host task of `subtask` that [`abort`](Self::abort)
+    /// marked, so the caller of the abort can drop it without waiting
+    /// for a turn. `None` when the set holds no task of the subtask, or
+    /// when a turn has it out (that turn finds the mark when it puts
+    /// the task back, as it always did).
+    pub fn take_aborted(&mut self, subtask: SubtaskId) -> Option<(u64, Waker, HostTask<T>)> {
+        let key = self
+            .tasks
+            .iter()
+            .find(|(_, entry)| entry.subtask == Some(subtask) && entry.aborted)
+            .map(|(key, _)| *key)?;
+        let (waker, task) = self.take(key)?;
+        Some((key, waker, task))
+    }
+
     /// Whether the task given out under `key` was marked by
     /// [`abort`](Self::abort).
     pub fn is_aborted(&self, key: u64) -> bool {

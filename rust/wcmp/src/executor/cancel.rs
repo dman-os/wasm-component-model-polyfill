@@ -424,6 +424,22 @@ fn abort_host_callee<T: 'static>(
 ) -> crate::error::Result<BlockStep<T>> {
     if !resolved(tables, subtask)? {
         store.internal().scheduler_mut().abort_host_task(subtask);
+        if !async_ {
+            // A synchronous cancel returns only once the callee has resolved
+            // (component-model `subtask.cancel` without `async`: "if the
+            // subtask has not resolved, the cancel blocks until it does", and a
+            // host callee that is cancelled resolves at once, as Wasmtime's
+            // abort of the host task does). Waiting here for a later turn to
+            // drop the future would suspend the calling thread, and a
+            // synchronous export of the guest that cancels would then return
+            // `Pending` on a provider that hands the wait to its driver (the
+            // browser). The store is lent here as it is in a turn, so the drop
+            // runs now and the subtask resolves before this built-in returns.
+            let aborted = store.internal().scheduler_mut().take_aborted_host_task(subtask);
+            if let Some((key, waker, task)) = aborted {
+                store.abort_host_task(key, &waker, task)?;
+            }
+        }
     }
     after_request(tables, subtask, async_)
 }

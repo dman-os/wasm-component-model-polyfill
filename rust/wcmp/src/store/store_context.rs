@@ -1407,7 +1407,12 @@ impl<'a, T: 'static> StoreContext<'a, T> {
     /// accessor, and it reaches it as a poll would. A drop that
     /// poisoned the store resolves nothing, as a poll that poisoned it
     /// crosses nothing.
-    fn abort_host_task(&mut self, key: u64, waker: &Waker, task: HostTask<T>) -> Result<()> {
+    pub(crate) fn abort_host_task(
+        &mut self,
+        key: u64,
+        waker: &Waker,
+        task: HostTask<T>,
+    ) -> Result<()> {
         self.scheduler_mut().complete_host_task(key);
         let subtask = task.abort(self, waker);
         if self.poisoned() {
