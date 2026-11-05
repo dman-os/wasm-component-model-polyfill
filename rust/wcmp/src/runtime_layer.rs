@@ -35,6 +35,8 @@ use core::task::{Context, Poll, Waker};
 use std::collections::HashMap;
 
 use crate::error::{Error, InstantiationError};
+use crate::executor::context_slots;
+use crate::store::StoreData;
 
 /// The type of a memory, which only the tests make one from.
 #[cfg(test)]
@@ -267,10 +269,17 @@ pub trait HostFrames {
 /// trap. The store counts the body as a host frame for as long as it
 /// runs, which is how the polyfill knows whether only WebAssembly
 /// lies between the start of a thread's stack and a suspension.
-pub fn host_func<T: HostFrames + 'static>(
-    mut store: impl AsContextMut<Data = T>,
+///
+/// The body can have pushed or popped the scope of a task or a
+/// thread, so the thread that runs when the guest goes on can differ
+/// from the one that called. The function makes the context slots'
+/// globals the slots of the thread that will run before it returns
+/// to the guest, as
+/// [`context_slots`](crate::executor::context_slots) states.
+pub fn host_func<T: 'static>(
+    mut store: impl AsContextMut<Data = StoreData<T>>,
     ty: FuncType,
-    func: impl Fn(StoreContextMut<'_, T>, &[Val], &mut [Val]) -> anyhow::Result<()>
+    func: impl Fn(StoreContextMut<'_, StoreData<T>>, &[Val], &mut [Val]) -> anyhow::Result<()>
     + Send
     + Sync
     + 'static,
@@ -278,11 +287,14 @@ pub fn host_func<T: HostFrames + 'static>(
     Func::new(
         store.as_context_mut(),
         ty,
-        move |mut caller: Caller<'_, T>, params, results| {
+        move |mut caller: Caller<'_, StoreData<T>>, params, results| {
             *caller.data_mut().host_frames() += 1;
             let result = func(caller.as_context_mut(), params, results);
             *caller.data_mut().host_frames() -= 1;
-            result
+            result?;
+            let tables = caller.data().tables_handle();
+            context_slots::sync(&mut caller, &tables)?;
+            Ok(())
         },
     )
     .map_err(substrate_failure)

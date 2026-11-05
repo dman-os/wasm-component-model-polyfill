@@ -70,6 +70,7 @@ use crate::abi::runtime_state::AbiRuntimeState;
 use crate::abi::{check_spilled_address, lift};
 use crate::concurrency::{InstanceId, Scope, SubtaskId, TaskId, TaskState};
 use crate::error::{AbiCause, AbiError, AbiPosition, Error, Result, ReturnMismatchKind, TaskCause};
+use crate::executor::context_slots;
 use crate::executor::intrinsics::core_func_type;
 use crate::executor::ir::{CanonOptions, CoreSignature};
 use crate::instance::{ErasedReturnLift, ReturnLift};
@@ -374,6 +375,7 @@ pub fn cross_result_into_caller<T: 'static>(
             _ => false,
         }
     };
+    context_slots::sync(store_ctx.as_context_mut(), tables)?;
     let crossed = return_
         .call(store_ctx.as_context_mut(), &arguments, &mut results)
         .map_err(call_failure);

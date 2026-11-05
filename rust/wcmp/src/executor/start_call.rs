@@ -492,6 +492,7 @@ fn start_call<T: 'static>(
         .is_some_and(|provider| provider.resumes_later());
     if !nested && !own_stack {
         let mut core_results = slots;
+        store.internal().sync_context_slots()?;
         let called = function
             .call(
                 store.internal().runtime_mut(),
@@ -592,6 +593,7 @@ fn call_start_function<T: 'static>(
     };
     // The start function hands back the callee's flat parameters, one
     // for each slot of `results`, typed as the callee takes them.
+    store.internal().sync_context_slots()?;
     start
         .call(store.internal().runtime_mut(), &arguments, &mut results)
         .map_err(call_failure)?;

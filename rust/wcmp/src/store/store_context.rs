@@ -245,6 +245,17 @@ impl<'a, T: 'static> StoreContext<'a, T> {
         self.store_data().lock_tables()
     }
 
+    /// Make the context slots' globals the slots of the thread that
+    /// runs, which every entry of the polyfill into guest code does
+    /// first once it changed the stack of current scopes. See
+    /// [`context_slots`](crate::executor::context_slots).
+    /// Workspace-internal.
+    fn sync_context_slots(&mut self) -> Result<()> {
+        self.reachable()?;
+        let tables = self.tables_handle();
+        crate::executor::context_slots::sync(self.runtime_mut(), &tables)
+    }
+
     /// Lock handle tables reached through a handle of their own,
     /// so that the caller keeps the rest of the store borrowable.
     /// A turn needs this: it holds the scheduler's queues mutably
@@ -377,6 +388,7 @@ impl<'a, T: 'static> StoreContext<'a, T> {
                     let Some(function) = function else {
                         return Ok(());
                     };
+                    store.sync_context_slots()?;
                     function
                         .call(&mut store.runtime, &[RuntimeVal::I32(rep as i32)], &mut [])
                         .map_err(|err| {
@@ -1832,6 +1844,7 @@ impl<'a, T: 'static> StoreContext<'a, T> {
             .filter(|provider| !(sync && SuspendProvider::<T>::reports_traps_late(provider)));
         let Some(provider) = provider else {
             let mut results = results;
+            self.sync_context_slots()?;
             let called = entry
                 .call(self.runtime_mut(), args, &mut results)
                 .map_err(call_failure)

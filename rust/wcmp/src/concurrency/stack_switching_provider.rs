@@ -289,6 +289,7 @@ impl<T: 'static> SuspendProvider<T> for StackSwitchingProvider {
         .chain(args.iter().copied())
         .collect::<Vec<_>>();
         let mut status = [RuntimeVal::I32(0)];
+        store.internal().sync_context_slots()?;
         start
             .call(store.internal().runtime_mut(), &arguments, &mut status)
             .map_err(call_failure)?;
@@ -310,6 +311,7 @@ impl<T: 'static> SuspendProvider<T> for StackSwitchingProvider {
             return Err(Error::Thread(ThreadCause::NotSuspended));
         }
         let mut status = [RuntimeVal::I32(0)];
+        store.internal().sync_context_slots()?;
         self.resume
             .call(
                 store.internal().runtime_mut(),

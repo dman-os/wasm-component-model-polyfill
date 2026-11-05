@@ -37,7 +37,11 @@ pub struct Thread {
     /// thread inside a synchronous lower names the call's subtask.
     pub readiness: Option<Readiness>,
     /// The two context slots, which `context.get` reads and
-    /// `context.set` writes.
+    /// `context.set` writes. The slots of the thread that runs live in
+    /// core globals instead, and these are stale while the thread is
+    /// the live one: they are the record of truth for a thread that
+    /// does not run, and a host reader of any thread goes through
+    /// `executor::context_slots::slots_of`.
     pub context: [i32; 2],
     /// The may-not-suspend flag of the callee instance as it was
     /// before this thread's task entered it, saved by the enter

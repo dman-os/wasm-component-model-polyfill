@@ -19,6 +19,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   backend: the export runs as a plain core call, so the call is `Ready(Err)` on
   its first poll instead of `Pending` until a microtask.
 
+### Performance
+
+- `canon context.get` and `canon context.set` no longer cross into the host. A
+  small core module of the store holds the running thread's two slots in
+  mutable `i32` globals and exports the functions that read and write them, and
+  the store links those in place of the built-ins, so a guest's call stays in
+  WebAssembly. A guest that keeps its shadow stack pointer in a slot calls them
+  for every function with a frame, which cost about 30 to 50 times in the
+  browser. The store makes the globals the slots of the thread that runs before
+  guest code gets control: ahead of every call into the guest and as every host
+  function returns to it. A thread's record holds its slots only while it is not
+  the running thread.
+
 ### Changed
 
 - `Store::run_until_stalled` answers a `Stalled`: `Yielded` when a task gave way

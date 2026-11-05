@@ -46,14 +46,14 @@ use super::build_subtask_cancel;
 use super::build_task_cancel;
 use super::build_task_return;
 use super::build_thread_yield;
+use super::context_slots;
 use super::error_context_builtins::{
     build_error_context_debug_message, build_error_context_drop, build_error_context_new,
     build_error_context_transfer,
 };
 use super::intrinsics::{
-    build_backpressure_dec, build_backpressure_inc, build_context_get, build_context_set,
-    build_end_transfer, build_enter_sync_call, build_exit_sync_call, build_resource_transfer,
-    build_transcoder, build_trap,
+    build_backpressure_dec, build_backpressure_inc, build_end_transfer, build_enter_sync_call,
+    build_exit_sync_call, build_resource_transfer, build_transcoder, build_trap,
 };
 use super::start_task::StartTask;
 use super::waitable_builtins::{
@@ -380,6 +380,16 @@ async fn run_plan<T: 'static>(
     // the thread's stack, and a host trampoline is not WebAssembly.
     // The shims of one instantiation come from one extension of the
     // store's switch module, and each takes the trampoline's place.
+    // The context built-ins link to the functions of a core module
+    // the store makes once, before the first of them is linked.
+    if ir.trampoline_specs.iter().any(|spec| {
+        matches!(
+            spec,
+            TrampolineSpec::ContextGet { .. } | TrampolineSpec::ContextSet { .. }
+        )
+    }) {
+        context_slots::install(store).await?;
+    }
     let provider = store.internal().provider();
     let mut trampolines: Vec<Option<RuntimeFunc>> = Vec::with_capacity(ir.trampoline_specs.len());
     let mut blocking: Vec<(usize, BlockingBuiltin<T>)> = Vec::new();
@@ -658,6 +668,7 @@ async fn instantiate_core<T: 'static>(
     owner: Option<InstanceId>,
 ) -> Result<RuntimeInstance> {
     let start = StartTask::enter(store.internal().tables(), owner)?;
+    store.internal().sync_context_slots()?;
     let instance =
         instantiate_module(store.internal().runtime_mut(), module.inner(), imports).await;
     drop(start);
@@ -756,12 +767,23 @@ fn build_runtime_trampoline<T: 'static>(
             build_enter_sync_call(store, signature, abi_state.clone())
         }
         TrampolineSpec::ExitSyncCall { signature } => build_exit_sync_call(store, signature),
-        TrampolineSpec::ContextGet { slot, signature } => {
-            build_context_get(store, *slot, signature)
-        }
-        TrampolineSpec::ContextSet { slot, signature } => {
-            build_context_set(store, *slot, signature)
-        }
+        // The slots live in the store's core globals, and these two
+        // are the functions of its context module that read and
+        // write them, so a guest's call stays in WebAssembly.
+        TrampolineSpec::ContextGet { slot } => store
+            .internal()
+            .lock_tables()?
+            .context_slots
+            .as_ref()
+            .ok_or_else(|| internal("a context built-in was linked before the context module"))
+            .and_then(|slots| slots.getter(*slot)),
+        TrampolineSpec::ContextSet { slot } => store
+            .internal()
+            .lock_tables()?
+            .context_slots
+            .as_ref()
+            .ok_or_else(|| internal("a context built-in was linked before the context module"))
+            .and_then(|slots| slots.setter(*slot)),
         TrampolineSpec::BackpressureInc {
             instance,
             signature,

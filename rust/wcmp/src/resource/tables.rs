@@ -43,6 +43,7 @@ use crate::concurrency::{
     TaskTables, ThreadId, WaitableId, WaitableSetId,
 };
 use crate::error::Error;
+use crate::executor::context_slots::ContextSlots;
 use crate::internal::ErrorInternal;
 use crate::value::Val;
 
@@ -73,6 +74,13 @@ pub struct HandleTables {
     /// the collection from inside a runtime-layer closure, where the
     /// store itself is unreachable. Workspace-internal.
     pub scheduler: SchedulerState,
+    /// The core globals that hold the context slots of the running
+    /// thread, once an instantiation made them. They live here, next
+    /// to the thread records whose slots they stand in for, because
+    /// the code that must make the live thread the running one is
+    /// handed these tables and a core store, and not always the
+    /// store's own data type. Workspace-internal.
+    pub context_slots: Option<ContextSlots>,
     /// The store's cap on its live handles: the entries of every
     /// handle table, the host's included, and the threads of every
     /// thread table. A new handle past it is refused with
@@ -97,6 +105,7 @@ impl HandleTables {
             host_tables: HashMap::new(),
             tasks,
             scheduler: SchedulerState::new(),
+            context_slots: None,
             handle_limit: DEFAULT_HANDLE_LIMIT,
             handle_count,
         }

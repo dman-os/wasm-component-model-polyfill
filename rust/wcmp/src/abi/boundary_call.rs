@@ -47,6 +47,7 @@ use crate::abi::instance::BoundaryInstance;
 use crate::abi::instance_flags::InstanceFlags;
 use crate::concurrency::{InstanceId, TaskId};
 use crate::error::{Error, Result};
+use crate::executor::context_slots;
 use crate::internal::ErrorInternal;
 use crate::resource::HandleTables;
 use crate::runtime_layer::AsContextMut;
@@ -192,6 +193,10 @@ impl BoundaryCall {
         }
         drop(records);
         call.tables = Some(tables.clone());
+        // The call runs guest code next, in the task it pushed or in
+        // the export's own, so the context slots' globals must hold
+        // the slots of the thread that runs there.
+        context_slots::sync(store.as_context_mut(), tables)?;
         Ok(call)
     }
 

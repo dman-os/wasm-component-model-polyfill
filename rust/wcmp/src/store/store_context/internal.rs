@@ -381,6 +381,12 @@ impl<'b, 'a, T: 'static> StoreContextInternal<'b, 'a, T> {
         self.context.poison();
     }
 
+    /// Make the context slots' globals the slots of the thread that
+    /// runs, before the polyfill enters guest code.
+    pub fn sync_context_slots(self) -> Result<()> {
+        self.context.sync_context_slots()
+    }
+
     /// Refuse a host entry into a guest of a poisoned store, with the
     /// cannot-enter cause.
     pub fn enter_guest(self) -> Result<()> {

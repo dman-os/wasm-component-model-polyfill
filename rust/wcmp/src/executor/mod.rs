@@ -51,6 +51,7 @@ mod thread_yield;
 mod translate;
 mod translator_features;
 
+pub mod context_slots;
 pub mod intrinsics;
 pub mod ir;
 pub mod trampoline;

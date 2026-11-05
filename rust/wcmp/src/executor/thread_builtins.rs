@@ -349,6 +349,7 @@ fn run_thread<T: 'static>(
         .tasks
         .enter_thread(thread)
         .ok_or_else(|| Error::internal("a thread started whose record is not in the store"))?;
+    store.internal().sync_context_slots()?;
     let outcome = start
         .function
         .call(store.internal().runtime_mut(), &[start.context], &mut [])

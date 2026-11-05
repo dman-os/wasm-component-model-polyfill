@@ -107,6 +107,7 @@ use crate::abi::{check_spilled_address, lift, lower};
 use crate::boundary::{BoundaryScope, BoundarySegment, HostWindow, ImportName};
 use crate::component::FunctionType;
 use crate::error::{AbiCause, AbiError, AbiPosition, Error, Result, TaskCause};
+use crate::executor::context_slots;
 use crate::executor::ir::{CanonOptions, LoweringSpec};
 use crate::internal::{AccessorInternal, ErrorInternal, HostCallInternal, ResourceTypeInternal};
 use crate::linker::{
@@ -265,6 +266,9 @@ pub fn build_resource_drop_trampoline<T: 'static>(
                         .lock()
                         .map_err(|_| anyhow!("resource destructor slot poisoned"))?;
                     if let Some(destructor) = destructor {
+                        // The destructor's task is the current scope
+                        // now, so its thread is the one that runs.
+                        context_slots::sync(&mut store_ctx, &tables)?;
                         destructor
                             .call(&mut store_ctx, &[RuntimeVal::I32(rep as i32)], &mut [])
                             .map_err(|error| {

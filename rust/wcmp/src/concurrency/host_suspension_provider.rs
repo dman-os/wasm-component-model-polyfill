@@ -560,6 +560,7 @@ impl HostSuspensionProvider {
         start: RuntimeFunc,
         arguments: &[RuntimeVal],
     ) -> Result<EntryStatus> {
+        store.internal().sync_context_slots()?;
         self.threads().running.push(Running { thread, frames: 0 });
         let runtime = store.internal().runtime_mut();
         let mut resumption = match start.start_resumable(&mut *runtime, arguments) {
@@ -603,6 +604,14 @@ impl HostSuspensionProvider {
         };
         let thread = flight.thread();
         self.threads().running.push(Running { thread, frames: 0 });
+        // The flight is a thread an earlier turn left to the store, with
+        // its scopes on the stack, so the thread that runs is the one
+        // the stack names now. A failure here is a broken invariant of
+        // the store's records, and the flight has no one to return it to.
+        store
+            .internal()
+            .sync_context_slots()
+            .expect("the context slots follow the thread a flight runs");
         let runtime = store.internal().runtime_mut();
         let resumption = match flight {
             Flight::Start {
@@ -674,6 +683,7 @@ impl<T: 'static> SuspendProvider<T> for HostSuspensionProvider {
         if self.at_rest(store) {
             return self.start_at_rest(store, index, start, &arguments);
         }
+        store.internal().sync_context_slots()?;
         let frames = host_frames(store);
         self.threads().running.push(Running {
             thread: index,

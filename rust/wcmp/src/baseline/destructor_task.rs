@@ -322,8 +322,20 @@ async fn run_with_probe(bytes: &[u8]) -> (Result<Box<[Val]>>, Seen, Seen) {
         .root()
         .func_wrap(
             "probe",
-            move |_: HostCall<'_, ()>, (x,): (u32,)| -> Result<(u32,)> {
-                *recorded.lock().expect("record") = seen!(&tables);
+            move |mut call: HostCall<'_, ()>, (x,): (u32,)| -> Result<(u32,)> {
+                let mut seen = seen!(&tables);
+                // The record of the running thread is stale: its slots
+                // are in the core globals the guest reads and writes.
+                let thread = tables.lock().expect("handle tables").tasks.current_thread();
+                if let Some(thread) = thread {
+                    seen.context = crate::executor::context_slots::slots_of(
+                        call.store().internal().runtime_mut(),
+                        &tables,
+                        thread,
+                    )?
+                    .unwrap_or([0; 2]);
+                }
+                *recorded.lock().expect("record") = seen;
                 Ok((x,))
             },
         )
