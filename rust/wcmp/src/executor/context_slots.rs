@@ -68,21 +68,36 @@ pub struct ContextSlots {
     get: [RuntimeFunc; SLOTS],
     set: [RuntimeFunc; SLOTS],
     live: Option<ThreadId>,
+    /// Whether the `dead` global is set, which the module's `get` and
+    /// `set` functions check and trap on.
+    dead: bool,
+    /// The global that is 1 while no task is on the stack.
+    no_task: RuntimeGlobal,
 }
 
 impl ContextSlots {
     /// The bytes of the context module. It imports `context.slot0`
-    /// and `context.slot1`, mutable `i32` globals, and exports `get0`,
-    /// `set0`, `get1`, and `set1`:
+    /// and `context.slot1`, mutable `i32` globals, and `context.no_task`,
+    /// a third that is 1 while no task is on the store's stack, and
+    /// exports `get0`, `set0`, `get1`, and `set1`:
     ///
     /// ```text
-    /// (func (export "get<N>") (result i32) (global.get $slot<N>))
-    /// (func (export "set<N>") (param i32) (global.set $slot<N> (local.get 0)))
+    /// (func (export "get<N>") (result i32)
+    ///   (if (global.get $no_task) (then unreachable))
+    ///   (global.get $slot<N>))
+    /// (func (export "set<N>") (param i32)
+    ///   (if (global.get $no_task) (then unreachable))
+    ///   (global.set $slot<N> (local.get 0)))
     /// ```
+    ///
+    /// A slot read or written with no task on the stack is a broken
+    /// invariant, which the built-in used to refuse with an error. The
+    /// check is one global read and a branch, so the hot path still
+    /// makes no host call.
     fn module_bytes() -> Vec<u8> {
         use wasm_encoder::{
-            CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-            ImportSection, Instruction, Module, TypeSection, ValType as Encoded,
+            BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function,
+            FunctionSection, ImportSection, Instruction, Module, TypeSection, ValType as Encoded,
         };
 
         let mut types = TypeSection::new();
@@ -92,25 +107,34 @@ impl ContextSlots {
         let mut functions = FunctionSection::new();
         let mut exports = ExportSection::new();
         let mut code = CodeSection::new();
+        let global = EntityType::Global(wasm_encoder::GlobalType {
+            val_type: Encoded::I32,
+            mutable: true,
+            shared: false,
+        });
+        for slot in 0..SLOTS {
+            imports.import("context", &format!("slot{slot}"), global);
+        }
+        imports.import("context", "no_task", global);
+        let no_task = SLOTS as u32;
         for slot in 0..SLOTS as u32 {
-            imports.import(
-                "context",
-                &format!("slot{slot}"),
-                EntityType::Global(wasm_encoder::GlobalType {
-                    val_type: Encoded::I32,
-                    mutable: true,
-                    shared: false,
-                }),
-            );
             functions.function(0);
             functions.function(1);
             exports.export(&format!("get{slot}"), ExportKind::Func, slot * 2);
             exports.export(&format!("set{slot}"), ExportKind::Func, slot * 2 + 1);
             let mut get = Function::new([]);
+            get.instruction(&Instruction::GlobalGet(no_task));
+            get.instruction(&Instruction::If(BlockType::Empty));
+            get.instruction(&Instruction::Unreachable);
+            get.instruction(&Instruction::End);
             get.instruction(&Instruction::GlobalGet(slot));
             get.instruction(&Instruction::End);
             code.function(&get);
             let mut set = Function::new([]);
+            set.instruction(&Instruction::GlobalGet(no_task));
+            set.instruction(&Instruction::If(BlockType::Empty));
+            set.instruction(&Instruction::Unreachable);
+            set.instruction(&Instruction::End);
             set.instruction(&Instruction::LocalGet(0));
             set.instruction(&Instruction::GlobalSet(slot));
             set.instruction(&Instruction::End);
@@ -151,8 +175,8 @@ pub async fn install<T: 'static>(store: &mut StoreContext<'_, T>) -> Result<()> 
         return Ok(());
     }
     let runtime = store.internal().runtime_mut();
-    let mut globals = Vec::with_capacity(SLOTS);
-    for _ in 0..SLOTS {
+    let mut globals = Vec::with_capacity(SLOTS + 1);
+    for _ in 0..=SLOTS {
         globals.push(
             RuntimeGlobal::new(
                 runtime.as_context_mut(),
@@ -165,9 +189,10 @@ pub async fn install<T: 'static>(store: &mut StoreContext<'_, T>) -> Result<()> 
     let module = RuntimeModule::new(runtime.engine(), &ContextSlots::module_bytes())
         .map_err(substrate_failure)?;
     let mut imports = Imports::default();
-    for (slot, global) in globals.iter().enumerate() {
+    for (slot, global) in globals.iter().take(SLOTS).enumerate() {
         imports.define("context", &format!("slot{slot}"), *global);
     }
+    imports.define("context", "no_task", globals[SLOTS]);
     let instance = instantiate(&mut *runtime, &module, &imports)
         .await
         .map_err(substrate_failure)?;
@@ -183,6 +208,8 @@ pub async fn install<T: 'static>(store: &mut StoreContext<'_, T>) -> Result<()> 
         get: [export("get0".into())?, export("get1".into())?],
         set: [export("set0".into())?, export("set1".into())?],
         live: None,
+        dead: false,
+        no_task: globals[SLOTS],
     };
     store.internal().lock_tables()?.context_slots = Some(slots);
     Ok(())
@@ -190,8 +217,8 @@ pub async fn install<T: 'static>(store: &mut StoreContext<'_, T>) -> Result<()> 
 
 /// Make the live thread the thread that runs, as the module
 /// documentation states. A store with no context module has no guest
-/// that reads a slot, and a store with no task on its stack has no
-/// thread to make live, so neither changes anything.
+/// that reads a slot. A store with no task on its stack has no thread to
+/// make live, and traps any slot access until a task is current.
 ///
 /// The tables stay locked for the length of the swap, which is one
 /// read and one write of each slot's global at most, so no other
@@ -209,8 +236,24 @@ pub fn sync(mut store: impl AsContextMut, tables: &Mutex<HandleTables>) -> Resul
         return Ok(());
     };
     let Some(current) = tasks.current_thread() else {
+        // No task is on the stack, so no guest may touch a slot: the
+        // module's functions trap until a task is current again.
+        if !slots.dead {
+            slots
+                .no_task
+                .set(store.as_context_mut(), RuntimeVal::I32(1))
+                .map_err(substrate_failure)?;
+            slots.dead = true;
+        }
         return Ok(());
     };
+    if slots.dead {
+        slots
+            .no_task
+            .set(store.as_context_mut(), RuntimeVal::I32(0))
+            .map_err(substrate_failure)?;
+        slots.dead = false;
+    }
     if slots.live == Some(current) {
         return Ok(());
     }
@@ -266,5 +309,73 @@ impl ContextSlots {
             };
         }
         Ok(values)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::StoreInternalExt;
+    use crate::{Component, Engine, Linker, Store};
+    use wcmp_macros::component;
+
+    /// A component whose core module imports `context.get` slot 0, so
+    /// instantiating it makes the store's context module.
+    const READS_A_SLOT: &[u8] = component!(
+        r#"
+        (component
+          (core func $get (canon context.get i32 0))
+          (core module $m
+            (import "" "context.get" (func $get (result i32)))
+            (func (export "run") (result i32) (call $get)))
+          (core instance $i (instantiate $m
+            (with "" (instance (export "context.get" (func $get))))))
+          (func (export "run") (result u32) (canon lift (core func $i "run"))))
+        "#
+    );
+
+    #[wcmp_macros::test]
+    async fn it_traps_a_slot_access_while_no_task_is_on_the_stack() {
+        let engine = Engine::with_backend(crate::runtime_layer::test_backend()).expect("engine");
+        let component = Component::new(&engine, READS_A_SLOT)
+            .await
+            .expect("component parses");
+        let mut store: Store<()> = Store::new(&engine, ()).expect("store");
+        let linker: Linker<()> = Linker::new(&engine);
+        linker
+            .instantiate(&mut store, &component)
+            .await
+            .expect("instantiate");
+        let tables = store.internal().tables_handle();
+        let getter = tables
+            .lock()
+            .expect("tables")
+            .context_slots
+            .as_ref()
+            .expect("the component made the context module")
+            .getter(0)
+            .expect("slot 0");
+        let mut answer = [RuntimeVal::I32(-1)];
+
+        sync(store.internal().inner_mut(), &tables).expect("sync with no task");
+        getter
+            .call(store.internal().inner_mut(), &[], &mut answer)
+            .expect_err("a read with no task on the stack traps");
+
+        let instance = tables.lock().expect("tables").tasks.insert_instance();
+        tables
+            .lock()
+            .expect("tables")
+            .tasks
+            .push_task(None, None, instance)
+            .expect("room under the record cap");
+        sync(store.internal().inner_mut(), &tables).expect("sync with a task");
+        getter
+            .call(store.internal().inner_mut(), &[], &mut answer)
+            .expect("a read with a task on the stack answers");
+        assert!(
+            matches!(answer[0], RuntimeVal::I32(0)),
+            "a fresh thread's slot is zero"
+        );
     }
 }
