@@ -43,6 +43,16 @@
 //! the thread that runs. A thread record's slots are therefore stale
 //! while that thread is the live one, and [`slots_of`] reads the
 //! slots the way a host reader must.
+//!
+//! The other half of the invariant is that `no_task` is set whenever no
+//! task is on the stack, so a slot access that gets to run with none
+//! traps instead of reading the last thread's values. A task ends by
+//! popping its scope under the tables' lock, where no store is at hand
+//! to write a global, so the store syncs once more at every point where
+//! control comes back to the host: when an item of a turn ends, when a
+//! driver's turn ends, when a closure run in a turn ends, and when the
+//! instantiation of a core module ends. A module that has just been made
+//! starts with the flag set, because no task exists yet.
 
 use crate::concurrency::ThreadId;
 use crate::error::{Error, Result};
@@ -176,12 +186,15 @@ pub async fn install<T: 'static>(store: &mut StoreContext<'_, T>) -> Result<()> 
     }
     let runtime = store.internal().runtime_mut();
     let mut globals = Vec::with_capacity(SLOTS + 1);
-    for _ in 0..=SLOTS {
+    for i in 0..=SLOTS {
         globals.push(
             RuntimeGlobal::new(
                 runtime.as_context_mut(),
                 GlobalType::new(ValType::I32, Mutability::Var),
-                RuntimeVal::I32(0),
+                // No task is on the stack when the module is made: the
+                // flag starts set, as `dead` records, and the first
+                // `sync` with a task current clears it.
+                RuntimeVal::I32(i32::from(i >= SLOTS)),
             )
             .map_err(substrate_failure)?,
         );
@@ -208,7 +221,7 @@ pub async fn install<T: 'static>(store: &mut StoreContext<'_, T>) -> Result<()> 
         get: [export("get0".into())?, export("get1".into())?],
         set: [export("set0".into())?, export("set1".into())?],
         live: None,
-        dead: false,
+        dead: true,
         no_task: globals[SLOTS],
     };
     store.internal().lock_tables()?.context_slots = Some(slots);
@@ -316,7 +329,8 @@ impl ContextSlots {
 mod tests {
     use super::*;
     use crate::store::StoreInternalExt;
-    use crate::{Component, Engine, Linker, Store};
+    use crate::{Component, Engine, Instance, Linker, Store};
+    use std::sync::Arc;
     use wcmp_macros::component;
 
     /// A component whose core module imports `context.get` slot 0, so
@@ -333,6 +347,80 @@ mod tests {
           (func (export "run") (result u32) (canon lift (core func $i "run"))))
         "#
     );
+
+    /// An export that touches no slot, beside the one that reads it.
+    const RUNS_AN_EXPORT: &[u8] = component!(
+        r#"
+        (component
+          (core func $get (canon context.get i32 0))
+          (core module $m
+            (import "" "context.get" (func $get (result i32)))
+            (func (export "run") (result i32) (call $get)))
+          (core instance $i (instantiate $m
+            (with "" (instance (export "context.get" (func $get))))))
+          (func (export "run") (result u32) (canon lift (core func $i "run"))))
+        "#
+    );
+
+    /// Instantiate `bytes` in a fresh store, and hand back the store,
+    /// the instance, the context module's getter for slot 0, and the
+    /// store's tables.
+    async fn instantiated(
+        bytes: &[u8],
+    ) -> (Store<()>, Instance, RuntimeFunc, Arc<Mutex<HandleTables>>) {
+        let engine = Engine::with_backend(crate::runtime_layer::test_backend()).expect("engine");
+        let component = Component::new(&engine, bytes)
+            .await
+            .expect("component parses");
+        let mut store: Store<()> = Store::new(&engine, ()).expect("store");
+        let linker: Linker<()> = Linker::new(&engine);
+        let instance = linker
+            .instantiate(&mut store, &component)
+            .await
+            .expect("instantiate");
+        let tables = store.internal().tables_handle();
+        let getter = tables
+            .lock()
+            .expect("tables")
+            .context_slots
+            .as_ref()
+            .expect("the component made the context module")
+            .getter(0)
+            .expect("slot 0");
+        (store, instance, getter, tables)
+    }
+
+    #[wcmp_macros::test]
+    async fn it_traps_a_slot_access_right_after_instantiation() {
+        let (mut store, _instance, getter, _tables) = instantiated(READS_A_SLOT).await;
+        let mut answer = [RuntimeVal::I32(-1)];
+        // The test syncs nothing: the instantiation's own task ended,
+        // and the flag followed it.
+        getter
+            .call(store.internal().inner_mut(), &[], &mut answer)
+            .expect_err("a read after the instantiation's task ended traps");
+    }
+
+    #[wcmp_macros::test]
+    async fn it_traps_a_slot_access_after_an_export_returned() {
+        let (mut store, instance, getter, tables) = instantiated(RUNS_AN_EXPORT).await;
+        let run = instance.get_func("run").expect("the export");
+        let answer = run.call(&mut store, &[]).await.expect("the export runs");
+        assert!(matches!(answer[0], crate::Val::U32(0)), "{answer:?}");
+        let mut raw = [RuntimeVal::I32(-1)];
+        getter
+            .call(store.internal().inner_mut(), &[], &mut raw)
+            .expect_err("a read after the export returned traps");
+        assert!(
+            tables
+                .lock()
+                .expect("tables")
+                .tasks
+                .current_thread()
+                .is_none(),
+            "no task is on the stack"
+        );
+    }
 
     #[wcmp_macros::test]
     async fn it_traps_a_slot_access_while_no_task_is_on_the_stack() {

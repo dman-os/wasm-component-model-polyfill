@@ -672,6 +672,8 @@ async fn instantiate_core<T: 'static>(
     let instance =
         instantiate_module(store.internal().runtime_mut(), module.inner(), imports).await;
     drop(start);
+    // The start function's task is gone, so the flag follows.
+    store.internal().sync_context_slots()?;
     instance.map_err(|error| {
         if module.has_start() && instantiation_trapped(&error) {
             store.internal().poison();

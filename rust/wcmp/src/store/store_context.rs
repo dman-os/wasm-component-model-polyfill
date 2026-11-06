@@ -256,6 +256,24 @@ impl<'a, T: 'static> StoreContext<'a, T> {
         crate::executor::context_slots::sync(self.runtime_mut(), &tables)
     }
 
+    /// Run `body`, then sync the context slots whichever way it went,
+    /// for a point where control comes back to the host from guest
+    /// work that can have ended its task: the stack then holds no task
+    /// and the flag must say so, which popping a scope under the
+    /// tables' lock cannot write. `body`'s failure wins over the sync's.
+    /// A poisoned store is synced too, since nothing may read a stale
+    /// slot of it either. Workspace-internal.
+    fn settling_context_slots<R>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<R>,
+    ) -> Result<R> {
+        let ran = body(self);
+        let tables = self.tables_handle();
+        let settled = crate::executor::context_slots::sync(self.runtime_mut(), &tables);
+        let value = ran?;
+        settled.map(|()| value)
+    }
+
     /// Lock handle tables reached through a handle of their own,
     /// so that the caller keeps the rest of the store borrowable.
     /// A turn needs this: it holds the scheduler's queues mutably
@@ -466,6 +484,12 @@ impl<'a, T: 'static> StoreContext<'a, T> {
     /// The body of [`turn`](Self::turn), which poisons the store when
     /// this fails. Workspace-internal.
     fn run_driver_turn(&mut self, waker: &Waker) -> Result<Outcome> {
+        self.settling_context_slots(|store| store.drive_turn(waker))
+    }
+
+    /// The body of [`run_driver_turn`](Self::run_driver_turn), which
+    /// syncs the context slots once it ends. Workspace-internal.
+    fn drive_turn(&mut self, waker: &Waker) -> Result<Outcome> {
         // What the turn counts at the boundary is this store's.
         let _counted =
             BoundaryScope::enter(self.store_data().boundary_sink(), &ImportName::default());
@@ -524,7 +548,12 @@ impl<'a, T: 'static> StoreContext<'a, T> {
         let _counted =
             BoundaryScope::enter(self.store_data().boundary_sink(), &ImportName::default());
         let _turn = TurnGuard::enter(self.tables(), waker);
-        Ok(body(self))
+        let value = body(self);
+        // The body can have ended the task it ran, as an export's
+        // item does, so the flag follows before the host regains control.
+        let tables = self.tables_handle();
+        crate::executor::context_slots::sync(self.runtime_mut(), &tables)?;
+        Ok(value)
     }
 
     /// Run one nested turn of this store's scheduler: the fallback
@@ -1539,6 +1568,13 @@ impl<'a, T: 'static> StoreContext<'a, T> {
     /// waiting threads after it, since the item can have met them.
     #[tracing::instrument(level = "trace", name = "turn item", skip_all)]
     fn run_item(&mut self, item: Item<T>) -> Result<()> {
+        self.settling_context_slots(|store| store.run_item_unsettled(item))
+    }
+
+    /// The body of [`run_item`](Self::run_item), which syncs the
+    /// context slots once the item ends, because the item can have
+    /// ended its task.
+    fn run_item_unsettled(&mut self, item: Item<T>) -> Result<()> {
         // A guest work item queued after a trap, by guest code that
         // was unwinding from it, is dropped rather than run: a
         // poisoned store runs no more guest code. The host's own work

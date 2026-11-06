@@ -15,6 +15,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A context slot access traps whenever no task is on the stack, including after
+  an export returned or an instantiation finished. The store syncs the context
+  module's globals when an item or a turn ends and when a core module's
+  instantiation ends, and the flag starts set.
 - A trap in a synchronous-typed export is the call's own error on the browser
   backend: the export runs as a plain core call, so the call is `Ready(Err)` on
   its first poll instead of `Pending` until a microtask.
