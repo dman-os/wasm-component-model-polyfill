@@ -435,7 +435,10 @@ fn abort_host_callee<T: 'static>(
             // `Pending` on a provider that hands the wait to its driver (the
             // browser). The store is lent here as it is in a turn, so the drop
             // runs now and the subtask resolves before this built-in returns.
-            let aborted = store.internal().scheduler_mut().take_aborted_host_task(subtask);
+            let aborted = store
+                .internal()
+                .scheduler_mut()
+                .take_aborted_host_task(subtask);
             if let Some((key, waker, task)) = aborted {
                 store.abort_host_task(key, &waker, task)?;
             }

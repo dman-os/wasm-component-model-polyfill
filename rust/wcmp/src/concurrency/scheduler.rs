@@ -737,7 +737,10 @@ impl<T: 'static> Scheduler<T> {
 
     /// Take out the host task of `subtask` that
     /// [`abort_host_task`](Self::abort_host_task) marked.
-    pub fn take_aborted_host_task(&mut self, subtask: SubtaskId) -> Option<(u64, Waker, HostTask<T>)> {
+    pub fn take_aborted_host_task(
+        &mut self,
+        subtask: SubtaskId,
+    ) -> Option<(u64, Waker, HostTask<T>)> {
         self.host_tasks.take_aborted(subtask)
     }
 

@@ -2096,16 +2096,23 @@ async fn it_completes_a_synchronous_cancel_of_a_host_callee_on_the_first_poll() 
     for provider in PROVIDERS {
         let drops = Arc::new(Drops::default());
         let (mut store, instance) = instantiate_host_calls(provider, &drops).await;
-        let func = instance.get_func("cancel-sync").expect("the export is declared");
+        let func = instance
+            .get_func("cancel-sync")
+            .expect("the export is declared");
         let call = func.call(&mut store, &[]);
         let mut call = std::pin::pin!(call);
         let mut context = Context::from_waker(std::task::Waker::noop());
         let Poll::Ready(outcome) = call.as_mut().poll(&mut context) else {
             panic!("provider {provider}: the call suspended on its first poll");
         };
-        let values = outcome.unwrap_or_else(|error| panic!("cancel-sync failed: {}", chain(&error)));
+        let values =
+            outcome.unwrap_or_else(|error| panic!("cancel-sync failed: {}", chain(&error)));
         assert_eq!(values.len(), 1, "provider {provider}");
-        assert_eq!(drops.dropped.load(Ordering::SeqCst), 1, "provider {provider}");
+        assert_eq!(
+            drops.dropped.load(Ordering::SeqCst),
+            1,
+            "provider {provider}"
+        );
     }
 }
 
