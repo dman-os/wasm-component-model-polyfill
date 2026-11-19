@@ -208,7 +208,7 @@ fn include_from_file(config: &Config, code: &TokenStream) -> syn::Result<TokenSt
     static INVOCATION: AtomicUsize = AtomicUsize::new(0);
     let world = &config.resolve.worlds[config.world].name;
     let number = INVOCATION.fetch_add(1, Ordering::Relaxed);
-    let path = Path::new(env!("WCMP_BINDGEN_OUTPUT_DIR")).join(format!("{world}{number}.rs"));
+    let path = Path::new(env!("OUT_DIR")).join(format!("{world}{number}.rs"));
     std::fs::write(&path, code.to_string()).map_err(|error| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
